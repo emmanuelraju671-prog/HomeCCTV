@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "202565152209",
+    "project_id": "homecctv-3d855",
+    "storage_bucket": "homecctv-3d855.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:202565152209:android:8acf31ecfcf0d365a1c4f0",
+        "android_client_info": {
+          "package_name": "com.homecctv.camera"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAV0embQVeN8xpHjj3xOqBaBfsEowcqygI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
