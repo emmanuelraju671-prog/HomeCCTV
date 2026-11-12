@@ -1,6 +1,7 @@
 {
   "project_info": {
     "project_number": "202565152209",
+    "firebase_url": "https://homecctv-3d855-default-rtdb.asia-southeast1.firebasedatabase.app",
     "project_id": "homecctv-3d855",
     "storage_bucket": "homecctv-3d855.firebasestorage.app"
   },
@@ -12,7 +13,20 @@
           "package_name": "com.homecctv.camera"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "202565152209-ikuaa924qujam37542hi705ldfb2pcs0.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.homecctv.camera",
+            "certificate_hash": "e5743458da1e372b83be14bc15e21e7cb23ac074"
+          }
+        },
+        {
+          "client_id": "202565152209-ci0gprvvbp83hufjl3n9ia8tggekouf0.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
           "current_key": "AIzaSyAV0embQVeN8xpHjj3xOqBaBfsEowcqygI"
@@ -20,7 +34,12 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "202565152209-ci0gprvvbp83hufjl3n9ia8tggekouf0.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
         }
       }
     }

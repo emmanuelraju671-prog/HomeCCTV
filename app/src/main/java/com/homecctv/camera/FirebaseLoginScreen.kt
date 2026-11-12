@@ -1,4 +1,3 @@
-
 package com.homecctv.camera
 
 import androidx.compose.foundation.layout.*
@@ -11,12 +10,12 @@ import androidx.compose.ui.unit.dp
 @Composable
 fun FirebaseLoginScreen(
     firebaseManager: FirebaseManager,
-    onLoginSuccess: () -> Unit
+    onLoginSuccess: (role: String) -> Unit
 ) {
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var role by remember { mutableStateOf("camera") }
-    var isRegistering by remember { mutableStateOf(true) }
+    var isRegistering by remember { mutableStateOf(false) }
     var loading by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf("") }
 
@@ -52,7 +51,7 @@ fun FirebaseLoginScreen(
 
         Spacer(Modifier.height(16.dp))
 
-        Text("This device is:")
+        Text("This device role:")
 
         Row {
             RadioButton(
@@ -60,7 +59,7 @@ fun FirebaseLoginScreen(
                 onClick = { role = "camera" }
             )
             Text(
-                "Camera (Redmi)",
+                "Camera (Redmi Note 7)",
                 modifier = Modifier.padding(top = 12.dp)
             )
         }
@@ -71,7 +70,7 @@ fun FirebaseLoginScreen(
                 onClick = { role = "controller" }
             )
             Text(
-                "Controller (Samsung)",
+                "Controller (Samsung A36)",
                 modifier = Modifier.padding(top = 12.dp)
             )
         }
@@ -88,15 +87,14 @@ fun FirebaseLoginScreen(
                 loading = true
                 message = ""
 
-                val callback: (Boolean, String?) -> Unit =
-                    { success, result ->
-                        loading = false
-                        message = result ?: ""
+                val callback: (Boolean, String?) -> Unit = { success, result ->
+                    loading = false
+                    message = result ?: ""
 
-                        if (success) {
-                            onLoginSuccess()
-                        }
+                    if (success) {
+                        onLoginSuccess(role)
                     }
+                }
 
                 if (isRegistering) {
                     firebaseManager.register(

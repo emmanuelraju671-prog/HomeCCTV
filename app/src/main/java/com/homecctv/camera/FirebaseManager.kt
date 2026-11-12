@@ -21,7 +21,7 @@ class FirebaseManager(context: Context) {
 
     private val appContext = context.applicationContext
 
-    private val deviceId: String
+    val deviceId: String
         get() = Settings.Secure.getString(
             appContext.contentResolver,
             Settings.Secure.ANDROID_ID
@@ -41,7 +41,6 @@ class FirebaseManager(context: Context) {
             email.trim(),
             password
         ).addOnCompleteListener { task ->
-
             if (task.isSuccessful) {
                 saveDevice(role, callback)
             } else {
@@ -64,7 +63,6 @@ class FirebaseManager(context: Context) {
             email.trim(),
             password
         ).addOnCompleteListener { task ->
-
             if (task.isSuccessful) {
                 saveDevice(role, callback)
             } else {
@@ -77,7 +75,7 @@ class FirebaseManager(context: Context) {
         }
     }
 
-    private fun saveDevice(
+    fun saveDevice(
         role: String,
         callback: (Boolean, String?) -> Unit
     ) {
@@ -93,7 +91,8 @@ class FirebaseManager(context: Context) {
             return
         }
 
-        val deviceInfo = hashMapOf<String, Any>(
+        // Use updateChildren so existing fields (like name or settings) are not wiped
+        val deviceUpdates = hashMapOf<String, Any>(
             "deviceId" to deviceId,
             "role" to role,
             "model" to Build.MODEL,
@@ -107,9 +106,8 @@ class FirebaseManager(context: Context) {
             .child(user.uid)
             .child("devices")
             .child(deviceId)
-            .setValue(deviceInfo)
+            .updateChildren(deviceUpdates)
             .addOnCompleteListener { task ->
-
                 if (task.isSuccessful) {
                     callback(true, "Firebase connected successfully")
                 } else {
@@ -122,7 +120,22 @@ class FirebaseManager(context: Context) {
             }
     }
 
+    fun setDeviceOnlineStatus(online: Boolean) {
+        val uid = auth.currentUser?.uid ?: return
+        val updates = hashMapOf<String, Any>(
+            "online" to online,
+            "lastSeen" to ServerValue.TIMESTAMP
+        )
+        database
+            .child("users")
+            .child(uid)
+            .child("devices")
+            .child(deviceId)
+            .updateChildren(updates)
+    }
+
     fun signOut() {
+        setDeviceOnlineStatus(false)
         auth.signOut()
     }
 
