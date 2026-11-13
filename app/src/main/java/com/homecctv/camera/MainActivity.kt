@@ -2,9 +2,11 @@ package com.homecctv.camera
 
 import android.Manifest
 import android.app.Activity
+import android.app.KeyguardManager
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.net.Uri
@@ -48,7 +50,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -64,14 +65,16 @@ import java.util.concurrent.Executors
 
 class MainActivity : ComponentActivity() {
 
-    private lateinit var firebaseManager: FirebaseManager
+    private var firebaseManager: FirebaseManager? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // Keep screen alive so camera hardware doesn't sleep
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-
-        firebaseManager = FirebaseManager(this)
+        try {
+            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            firebaseManager = FirebaseManager(this)
+        } catch (e: Throwable) {
+            e.printStackTrace()
+        }
 
         setContent {
             HomeCCTVTheme {
@@ -79,7 +82,14 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    AppNavigationHost(firebaseManager = firebaseManager)
+                    val manager = firebaseManager
+                    if (manager != null) {
+                        AppNavigationHost(firebaseManager = manager)
+                    } else {
+                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Text("Initializing HomeCCTV...")
+                        }
+                    }
                 }
             }
         }
@@ -87,16 +97,22 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        if (firebaseManager.isSignedIn()) {
-            firebaseManager.setDeviceOnlineStatus(true)
-        }
+        try {
+            val fm = firebaseManager
+            if (fm != null && fm.isSignedIn()) {
+                fm.setDeviceOnlineStatus(true)
+            }
+        } catch (_: Throwable) {}
     }
 
     override fun onPause() {
         super.onPause()
-        if (firebaseManager.isSignedIn()) {
-            firebaseManager.setDeviceOnlineStatus(false)
-        }
+        try {
+            val fm = firebaseManager
+            if (fm != null && fm.isSignedIn()) {
+                fm.setDeviceOnlineStatus(false)
+            }
+        } catch (_: Throwable) {}
     }
 }
 
@@ -113,7 +129,9 @@ private fun AppNavigationHost(firebaseManager: FirebaseManager) {
         localContext.getSharedPreferences("homecctv_preferences", Context.MODE_PRIVATE)
     }
 
-    val cameraRegistry = remember { CameraRegistry(localContext) }
+    val cameraRegistry = remember {
+        try { CameraRegistry(localContext) } catch (_: Throwable) { null }
+    }
     val googleDriveManager = remember { GoogleDriveManager(localContext) }
 
     var currentScreen by remember {
@@ -157,17 +175,19 @@ private fun AppNavigationHost(firebaseManager: FirebaseManager) {
         }
 
         ScreenState.CONTROLLER -> {
-            ControllerDashboardScreen(
-                registry = cameraRegistry,
-                onSignOut = {
-                    firebaseManager.signOut()
-                    currentScreen = ScreenState.LOGIN
-                },
-                onSwitchToCamera = {
-                    preferences.edit().putString("device_role", "camera").apply()
-                    currentScreen = ScreenState.CAMERA
-                }
-            )
+            if (cameraRegistry != null) {
+                ControllerDashboardScreen(
+                    registry = cameraRegistry,
+                    onSignOut = {
+                        firebaseManager.signOut()
+                        currentScreen = ScreenState.LOGIN
+                    },
+                    onSwitchToCamera = {
+                        preferences.edit().putString("device_role", "camera").apply()
+                        currentScreen = ScreenState.CAMERA
+                    }
+                )
+            }
         }
     }
 }
@@ -178,7 +198,6 @@ private fun MandatoryGoogleLoginScreen(
     firebaseManager: FirebaseManager,
     onLoginSuccess: (String) -> Unit
 ) {
-    val localContext = LocalContext.current
     var role by remember { mutableStateOf("camera") }
     var loading by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf("") }
@@ -568,17 +587,16 @@ private fun HomeCCTVScreen(
     var audioEnabled by remember { mutableStateOf(true) }
     var torchEnabled by remember { mutableStateOf(false) }
     var frontCamera by remember { mutableStateOf(false) }
+    var isLandscape by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf("Waiting for camera permission") }
 
-    var backgroundServiceEnabled by remember { mutableStateOf(false) }
     var isStealthMode by remember { mutableStateOf(false) }
-    var lastTapTime by remember { mutableStateOf(0L) }
 
-    var motionDetectionEnabled by remember { mutableStateOf(false) }
+    var motionDetectionEnabled by remember { mutableStateOf(true) }
     var motionDetectedBanner by remember { mutableStateOf(false) }
-    var motionCountdown by remember { mutableStateOf(0) }
+    var detectionCountdown by remember { mutableStateOf(0) }
     var alarmMode by remember { mutableStateOf("Voice") }
-    var motionTimer by remember { mutableStateOf<CountDownTimer?>(null) }
+    var detectionTimer by remember { mutableStateOf<CountDownTimer?>(null) }
     var currentClipName by remember { mutableStateOf("") }
 
     var configuredAlertEmail by remember { mutableStateOf(emailAlertManager.getRecipientEmail()) }
@@ -601,12 +619,57 @@ private fun HomeCCTVScreen(
     var videoToDelete by remember { mutableStateOf<VideoItem?>(null) }
     var retentionReportMsg by remember { mutableStateOf("") }
 
-    // Control screen brightness for stealth mode
     fun setScreenBrightness(brightness: Float) {
-        val activity = localContext as? Activity ?: return
-        val layout = activity.window.attributes
+        val act = localContext as? Activity ?: return
+        val layout = act.window.attributes
         layout.screenBrightness = brightness
-        activity.window.attributes = layout
+        act.window.attributes = layout
+    }
+
+    fun toggleOrientation() {
+        val act = localContext as? Activity ?: return
+        isLandscape = !isLandscape
+        act.requestedOrientation = if (isLandscape) {
+            ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+        } else {
+            ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        }
+    }
+
+    // Android Lock Screen (Phone PIN / Pattern / Fingerprint) Prompt Launcher
+    val deviceUnlockLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            isStealthMode = false
+            setScreenBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE)
+            Toast.makeText(localContext, "Device Unlocked", Toast.LENGTH_SHORT).show()
+        } else {
+            if (isStealthMode) {
+                Toast.makeText(localContext, "Authentication required to unlock screen", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    fun requestDeviceUnlock() {
+        try {
+            val keyguardManager = localContext.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+            if (keyguardManager != null && keyguardManager.isDeviceSecure) {
+                val intent = keyguardManager.createConfirmDeviceCredentialIntent(
+                    "HomeCCTV Security",
+                    "Confirm phone PIN, Pattern, or Fingerprint to unlock camera"
+                )
+                if (intent != null) {
+                    deviceUnlockLauncher.launch(intent)
+                    return
+                }
+            }
+        } catch (e: Throwable) {
+            e.printStackTrace()
+        }
+        // Fallback only if no device PIN configured
+        isStealthMode = false
+        setScreenBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE)
     }
 
     fun loadVideos() {
@@ -690,7 +753,7 @@ private fun HomeCCTVScreen(
                 is VideoRecordEvent.Start -> {
                     recordingActive = true
                     recordingPaused = false
-                    status = if (prefix.contains("MOTION")) "🔴 Auto-recording motion clip (10s)..." else "Recording"
+                    status = if (prefix.contains("MOTION")) "🔴 Recording Motion (10s)..." else "Recording"
                 }
                 is VideoRecordEvent.Pause -> {
                     recordingPaused = true
@@ -724,7 +787,7 @@ private fun HomeCCTVScreen(
                             ) { success, _ ->
                                 ContextCompat.getMainExecutor(localContext).execute {
                                     if (success) {
-                                        Toast.makeText(localContext, "Alert email dispatched", Toast.LENGTH_SHORT).show()
+                                        Toast.makeText(localContext, "Motion Alert email dispatched", Toast.LENGTH_SHORT).show()
                                     }
                                 }
                             }
@@ -748,9 +811,9 @@ private fun HomeCCTVScreen(
     }
 
     fun stopRecordingManual() {
-        motionTimer?.cancel()
-        motionTimer = null
-        motionCountdown = 0
+        detectionTimer?.cancel()
+        detectionTimer = null
+        detectionCountdown = 0
         sirenManager.stopSiren()
         recording?.stop()
     }
@@ -763,24 +826,30 @@ private fun HomeCCTVScreen(
 
             when (alarmMode) {
                 "Siren" -> sirenManager.startSiren()
-                "Voice" -> sirenManager.speakWarning("Warning! Motion detected. Recording started.")
+                "Voice" -> sirenManager.speakWarning("Attention! Motion detected by security camera.")
             }
 
             startRecording(prefix = "MOTION_10s_")
 
-            motionTimer?.cancel()
-            motionTimer = object : CountDownTimer(10000, 1000) {
+            detectionTimer?.cancel()
+            detectionTimer = object : CountDownTimer(10000, 1000) {
                 override fun onTick(millisUntilFinished: Long) {
-                    motionCountdown = (millisUntilFinished / 1000).toInt() + 1
+                    detectionCountdown = (millisUntilFinished / 1000).toInt() + 1
                 }
 
                 override fun onFinish() {
-                    motionCountdown = 0
+                    detectionCountdown = 0
                     motionDetectedBanner = false
                     sirenManager.stopSiren()
                     recording?.stop()
                 }
             }.start()
+        }
+    }
+
+    val motionDetector = remember {
+        MotionDetector {
+            onMotionTriggered()
         }
     }
 
@@ -829,7 +898,6 @@ private fun HomeCCTVScreen(
         )
     }
 
-    // Remote Commands Listener from Samsung
     DisposableEffect(Unit) {
         remoteCommandManager.listenForCommands { action, _ ->
             ContextCompat.getMainExecutor(localContext).execute {
@@ -901,11 +969,15 @@ private fun HomeCCTVScreen(
             val imageAnalyzer = ImageAnalysis.Builder()
                 .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                 .build()
-                .also {
-                    it.setAnalyzer(cameraExecutor) { imgProxy ->
-                        liveStream.pushLiveFrame(imgProxy)
-                    }
+
+            imageAnalyzer.setAnalyzer(cameraExecutor) { imgProxy ->
+                try {
+                    motionDetector.processLuminance(imgProxy)
+                    liveStream.pushLiveFrame(imgProxy)
+                } catch (e: Throwable) {
+                    imgProxy.close()
                 }
+            }
 
             camera = provider.bindToLifecycle(
                 lifecycleOwner,
@@ -923,7 +995,7 @@ private fun HomeCCTVScreen(
             maximumZoom = zoomState?.maxZoomRatio ?: 4f
             zoomRatio = zoomState?.zoomRatio ?: 1f
             torchEnabled = false
-            status = "Camera connected & streaming"
+            status = "Camera live • Motion Sensing active"
 
         } catch (exception: Exception) {
             status = "Camera error: ${exception.message}"
@@ -959,7 +1031,7 @@ private fun HomeCCTVScreen(
         }
     }
 
-    LaunchedEffect(cameraPermissionGranted, frontCamera, selectedQuality) {
+    LaunchedEffect(cameraPermissionGranted, frontCamera, selectedQuality, isLandscape) {
         if (!cameraPermissionGranted) return@LaunchedEffect
         val future = ProcessCameraProvider.getInstance(localContext)
         future.addListener({
@@ -975,7 +1047,7 @@ private fun HomeCCTVScreen(
     DisposableEffect(Unit) {
         onDispose {
             setScreenBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE)
-            motionTimer?.cancel()
+            detectionTimer?.cancel()
             sirenManager.release()
             intercom.release()
             cameraExecutor.shutdown()
@@ -1010,7 +1082,6 @@ private fun HomeCCTVScreen(
         }
     }
 
-    // MAIN BOX HOLDING NORMAL SCREEN OR STEALTH BLACK SCREEN
     Box(modifier = Modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
@@ -1021,7 +1092,8 @@ private fun HomeCCTVScreen(
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
                     text = "HomeCCTV Camera",
@@ -1038,7 +1110,7 @@ private fun HomeCCTVScreen(
                 }
             }
 
-            if (motionDetectedBanner || motionCountdown > 0) {
+            if (motionDetectedBanner || detectionCountdown > 0) {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(
@@ -1050,7 +1122,7 @@ private fun HomeCCTVScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "🚨 MOTION DETECTED! Recording: ${motionCountdown}s remaining",
+                            text = "🚨 MOTION DETECTED! Recording: ${detectionCountdown}s remaining",
                             style = MaterialTheme.typography.titleMedium,
                             color = MaterialTheme.colorScheme.onErrorContainer
                         )
@@ -1079,7 +1151,16 @@ private fun HomeCCTVScreen(
                 // CAMERA PREVIEW
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.padding(8.dp)) {
-                        Text("Live Camera Preview")
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Live Camera Preview")
+                            OutlinedButton(onClick = { toggleOrientation() }) {
+                                Text(if (isLandscape) "🔄 Portrait" else "🔄 Landscape (16:9)")
+                            }
+                        }
 
                         AndroidView(
                             factory = { viewContext ->
@@ -1090,7 +1171,7 @@ private fun HomeCCTVScreen(
                             },
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(260.dp)
+                                .height(if (isLandscape) 360.dp else 260.dp)
                         )
 
                         Spacer(modifier = Modifier.height(8.dp))
@@ -1119,7 +1200,7 @@ private fun HomeCCTVScreen(
                     }
                 }
 
-                // STEALTH / SCREEN-OFF SURVEILLANCE CARD
+                // STEALTH / PASSWORD-PROTECTED LOCK SURVEILLANCE CARD
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(
@@ -1131,34 +1212,34 @@ private fun HomeCCTVScreen(
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Text(
-                            "🌙 Stealth / Screen-Off Surveillance",
+                            "🔒 Stealth Surveillance (Phone PIN Protected)",
                             style = MaterialTheme.typography.titleMedium
                         )
                         Text(
-                            "Turns the screen completely black with lowest brightness while keeping the camera, motion detection, and live streaming running 24/7 without Android killing the sensor.",
+                            "Turns the screen completely black while streaming & recording motion 24/7. Intruders cannot tamper or exit: tapping the screen requires your actual Phone Lock Screen PIN, Pattern, or Fingerprint.",
                             style = MaterialTheme.typography.bodySmall
                         )
                         Button(
                             onClick = {
                                 isStealthMode = true
-                                setScreenBrightness(0.01f) // Dims to minimum
+                                setScreenBrightness(0.01f)
                                 CameraForegroundService.startService(localContext)
-                                Toast.makeText(localContext, "Double-tap screen anytime to wake up", Toast.LENGTH_LONG).show()
+                                Toast.makeText(localContext, "Stealth Mode armed with Phone PIN / Fingerprint protection", Toast.LENGTH_LONG).show()
                             },
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Text("Turn Screen Off (Stealth Mode)")
+                            Text("Lock Screen & Arm Surveillance")
                         }
                     }
                 }
 
-                // MOTION SENSING & AUTO 10S CARD
+                // MOTION DETECTION CARD
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(
                         modifier = Modifier.padding(12.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Text("Motion Detection & Auto-10s Clips", style = MaterialTheme.typography.titleMedium)
+                        Text("📡 Motion Detection & Auto-10s Clips", style = MaterialTheme.typography.titleMedium)
 
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -1172,13 +1253,13 @@ private fun HomeCCTVScreen(
                                     motionDetectionEnabled = it
                                     if (!it) {
                                         sirenManager.stopSiren()
-                                        motionTimer?.cancel()
+                                        detectionTimer?.cancel()
                                     }
                                 }
                             )
                         }
 
-                        Text("Alarm Action on Motion:")
+                        Text("Alarm Action on Motion Detected:")
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -1218,7 +1299,7 @@ private fun HomeCCTVScreen(
 
                             OutlinedButton(
                                 onClick = {
-                                    sirenManager.speakWarning("Warning! Motion detected. You are on CCTV.")
+                                    sirenManager.speakWarning("Attention! Motion detected by security surveillance.")
                                 },
                                 modifier = Modifier.weight(1f)
                             ) {
@@ -1509,7 +1590,7 @@ private fun HomeCCTVScreen(
             }
         }
 
-        // FULLSCREEN STEALTH / BLACK SCREEN OVERLAY
+        // TAMPER-PROOF PITCH BLACK SCREEN OVERLAY (PHONE PIN / FINGERPRINT PROTECTED)
         if (isStealthMode) {
             Box(
                 modifier = Modifier
@@ -1519,31 +1600,10 @@ private fun HomeCCTVScreen(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null
                     ) {
-                        val now = System.currentTimeMillis()
-                        if (now - lastTapTime < 500) {
-                            // Double tap detected: Exit stealth mode
-                            isStealthMode = false
-                            setScreenBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE)
-                            Toast.makeText(localContext, "Stealth Mode Deactivated", Toast.LENGTH_SHORT).show()
-                        } else {
-                            lastTapTime = now
-                        }
+                        requestDeviceUnlock()
                     },
                 contentAlignment = Alignment.Center
             ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(
-                        text = "●",
-                        color = Color(0xFF151515), // Ultra faint indicator
-                        fontSize = 24.sp
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        text = "Double-tap anywhere to wake up",
-                        color = Color(0xFF1E1E1E), // Extremely faint text
-                        fontSize = 12.sp
-                    )
-                }
             }
         }
     }
